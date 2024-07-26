@@ -1,13 +1,15 @@
 import json
-from django.http import HttpResponse
-from django.shortcuts import redirect, render
+from os import access
+from pprint import pprint
+from django.http import HttpResponse, JsonResponse
+from django.shortcuts import redirect
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods
 from django.conf import settings
 from django.core.exceptions import PermissionDenied
 from rest_framework import status
-from rest_framework.request import Request
-from rest_framework.response import Response
+from .models import CustomUser
+from rest_framework_simplejwt.tokens import RefreshToken
 import requests
 
 
@@ -74,10 +76,39 @@ def kakao_redirect(req):
             status=500,
         )
 
-    user_profile = profile_response.json()
+    user_info = profile_response.json()
 
-    print(json.dumps(user_profile))
+    pprint(json.dumps(user_info))
 
-    response = HttpResponse(user_profile, status=status.HTTP_200_OK)
+    # Retrieve or create the user
+    kakao_id = user_info["id"]
+    kakao_email = user_info.get("kakao_account", {}).get("email")
+    kakao_username = user_info.get("properties", {}).get("nickname")
+
+    if not kakao_email:
+        return JsonResponse({"error": "Kakao account does not have an email"}, status=400)
+
+    # You might want to set a default password or handle password securely
+    user, created = CustomUser.objects.get_or_create(
+        email=kakao_email,
+        defaults={
+            "username": kakao_username,
+            "password": CustomUser.objects.make_random_password(),
+        },
+    )
+
+    pprint(user)
+
+    # Generate tokens using SimpleJWT
+    refresh = RefreshToken.for_user(user)
+    access_token = str(refresh.access_token)
+    refresh_token = str(refresh)
+
+    pprint(f"access_token: {access_token}\nrefresh_token: {refresh_token}")
+
+    # Set the JWT token in a cookie
+    response = redirect(reverse("/"))  # Replace with your frontend URL
+    response.set_cookie("access_token", access_token, httponly=True, secure=True, samesite="Lax")
+    response.set_cookie("refresh_token", refresh_token, httponly=True, secure=True, samesite="Lax")
 
     return response
